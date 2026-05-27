@@ -1,0 +1,4 @@
+pyrogram==2.0.106
+pydantic==2.5.0
+pytgcalls==5.10.1
+aiofiles==23.2.1
