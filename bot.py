@@ -1,611 +1,576 @@
 import asyncio
 import time
 import random
-import json
-import os
+import sqlite3
+import html
+import logging
 from datetime import datetime
-from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
-from pyrogram.enums import ChatType, ChatMemberStatus
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
+from telegram.ext import Application, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+from aiohttp import web
+import os
 
-#=============== CONFIG ================
-API_ID = 39035274 # Apna API ID daalein
-API_HASH = "6a0b24e16c4bea2bbc975b7dbb0c1e64" # Apna API Hash daalein
-BOT_TOKEN = "8931408596:AAHpQAeA0iLWLQjrltfJ1RZYfrh5HNrSbGQ" # Apna Bot Token daalein
-OWNER_ID = 8722144519 # Apna Telegram ID daalein
-BOT_USERNAME = "@ll_SUPRRME_XD_ll_BOT" # Apna bot username daalein
+# ==================== CONFIGURATION CORRIDOR ====================
+BOT_TOKEN = "8709841273:AAH5_-grkn-SpklPEqApHldiJGvqgpr1u3E"
+OWNER_ID = 8962957839  # ONLY ITACHI SAMA EXISTS NOW
+BOT_USERNAME = "@ITACHI_V_CH_bot"
+PORT = int(os.environ.get("PORT", 8080))
 
-#=============== DUMMY SERVER FOR RENDER ================
-class Handler(BaseHTTPRequestHandler):
-def do_GET(self):
-self.send_response(200)
-self.end_headers()
-self.wfile.write(b"Bot is running!")
-def log_message(self, format, *args):
-pass
+# ==================== ADVANCED DATABASE KERNEL ====================
+db = sqlite3.connect("mainframe.db", check_same_thread=False)
+cursor = db.cursor()
+cursor.execute("CREATE TABLE IF NOT EXISTS sudo (user_id INTEGER PRIMARY KEY)")
+cursor.execute("CREATE TABLE IF NOT EXISTS mute (user_id INTEGER PRIMARY KEY)")
+cursor.execute("CREATE TABLE IF NOT EXISTS stickers (file_id TEXT PRIMARY KEY)")
+cursor.execute("CREATE TABLE IF NOT EXISTS warnings (user_id INTEGER, count INTEGER)")
+cursor.execute("CREATE TABLE IF NOT EXISTS banned (user_id INTEGER PRIMARY KEY)")
+cursor.execute("CREATE TABLE IF NOT EXISTS shayari (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, category TEXT)")
+db.commit()
 
-def run_server():
-port = int(os.environ.get("PORT", 10000))
-server = HTTPServer(('0.0.0.0', port), Handler)
-server.serve_forever()
-
-Start server thread for Render
-threading.Thread(target=run_server, daemon=True).start()
-
-app = Client("fast_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-#Data storage
-sudo_users = {OWNER_ID} # Owner is sudo by default
-muted_users = set()
+# ==================== CORE CONTROL REGISTRIES ====================
+raid_active = False
+sraid_active = False
 spam_active = False
-spam_target = None
-spam_count = 0
-sticker_spam_active = False
-custom_stickers = []
+ghost_active = False
+echo_active = False
+current_raid_chat = None
+current_raid_target = None
+bot_start_time = datetime.now()
 
-#Shayari storage
-shayari_data = {
-"love": [],
-"sad": [],
-"birthday": [],
-"general": []
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ==================== ALL 35 DESTRUCTIVE & UTILITY COMMANDS ====================
+COMMAND_REGISTRY = {
+    ".alive": "Check kernel matrix pulse state.",
+    ".ping": "Test data packet transit latency.",
+    ".speed": "Audit server core execution bandwidth.",
+    ".love": "Pull emotional romantic strings from DB.",
+    ".sad": "Fetch dark heartbroken lines from DB.",
+    ".shayari": "Extract global multi-line mixed shayari.",
+    ".birthday": "Launch automated event celebration pack.",
+    ".addshayari": "Inject custom text buffer to storage matrix.",
+    ".mute": "Force mute target stream via text deletion.",
+    ".unmute": "Restore normal profile transmission keys.",
+    ".sticker": "Flood target via buffered sticker packets.",
+    ".addsticker": "Cache target sticker signature locally.",
+    ".spam": "Execute automated heavy text message storms.",
+    ".stopspam": "FORCE KILL active spam operations instantly.",
+    ".raid": "Deploy standard tagged verbal assault pipeline.",
+    ".sraid": "NUCLEAR MODE: Ultra-fast 8-msg/sec multi-thread tag.",
+    ".stopraid": "EMERGENCY HALT: Stop all raid configurations.",
+    ".s": "Master kill-switch for all running loops.",
+    ".kick": "Disconnect target connection node from chat room.",
+    ".ban": "Truncate hardware parameters & permanent ban.",
+    ".unban": "Re-authenticate blocked profile keys.",
+    ".addsudo": "Elevate trusted profile to proxy master layer.",
+    ".removesudo": "Deprecate user privileges instantly to null.",
+    ".sudolist": "Audit all proxy administrators inside cluster.",
+    ".mutelist": "Fetch logs of current black-space targets.",
+    ".warn": "Register a formal threat anomaly entry.",
+    ".warns": "Inspect target profile penalty logs.",
+    ".unwarn": "Purge registered threat records completely.",
+    ".lock": "Freeze group entry parameters for normal users.",
+    ".unlock": "Restore standard text streaming inside room.",
+    ".purge": "Wipe entire chat history packets instantly.",
+    ".echo": "Force bot to replicate user message streams.",
+    ".ghost": "Silently monitor and shadow target profile text.",
+    ".stopghost": "Terminate stealth monitoring configuration.",
+    ".stats": "Dump complete system memory allocation state."
 }
 
-#Default shayari
-default_shayari = {
-"love": [
-"❤️ प्यार में यूं मिलते हैं दिल,\nजैसे सागर में मिलती है नदी।\nतुमसे मिलकर लगता है,\nये दुनिया है सबसे हसीन! 💕",
-"💝 तेरी एक मुस्कान,\nबदल देती है मेरी पहचान।\nतू है तो मैं हूं,\nतू नहीं तो कुछ नहीं! 🌹"
- ],
-"sad": [
-"🥀 टूटे दिल का दर्द,\nसमझता है कोई और।\nहंसते हुए चेहरे के पीछे,\nदेखता है कोई और! 😢",
-"💔 अकेले बैठे हैं हम,\nतेरी यादों के सहारे।\nतू नहीं तो क्या हुआ,\nहै तेरी तस्वीर हमारे पास! 🥺"
- ],
-"birthday": [
-"🎂 जन्मदिन मुबारक हो आपको,\nहर खुशी हो आपके संग।\nखुशियां हों आपके पास इतनी,\nजितने आसमान में हैं बादल! 🎉",
-"🎈 हर पल खुशियों से भरा हो,\nहर दिन नया उजियारा हो।\nआपका जीवन फूलों जैसा महके,\nहर सपना हकीकत में ढले! 🌟"
- ],
-"general": [
-"💫 जिंदगी एक सफर है,\nअलग-अलग रंग लिए।\nकभी हंसी तो कभी आंसू,\nकभी प्यार तो कभी गम लिए! 🌈",
-"🌙 तन्हाई में अक्सर मिलता है सुकून,\nहवाओं में बसती हैं कहानियां।\nहर दर्द कहता है एक किस्सा,\nहर खुशी में छिपी होती है जवानियां! ⭐"
- ]
-}
+RAID_LINES = [
+    "ke samne koi bol sakta hai kya? 😭👑",
+    "Aukat me rehna seekh le abhi bhi waqt hai! 🔥⚡",
+    "Ab tera chat se gayab hone ka samay aa gaya hai! ☣️💀",
+    "Beta, baap se panga nahi lete, samjhe? ⚔️",
+    "Tera system hang kar denge beta! 🔥🤖",
+    "Aaj teri aukat dikha denge! 💥🌟",
+    "Bhag jaa yahan se! 🗑️🚶",
+    "Itachi aur Geto ka order hai! 👑👑""TERI MUMMY KI CHUT!",
+"BAHEN KE LODE TERI DADI KI BLACK HAIRY PUSSY",
+"TERI MUMMY KO ULTA LTKAKR TAANGDUGA AUR USKI CHUT MARUNGA!",
+"BSDK TERI MUMMY TERI DADI SB RANDI KI BACHI H",
+"BAHENKLODO TUMHARI MAA MERI SETTING",
+"TERI MUMMY RANDI H RANDI BSDK",
+"TERI MUMMY KI PUSSY M SCOOTER DALDUGA",
+"TERI MUMMY KI PUSSY ME CUM KRODUGA RANDI MAA K BACHE",
+"TERA KHANDAN HI RANDIYO KA H",
+"TERI DADI KI PUSSY ME MERA LUND",
+"TERI MUMMY KO CHODKR ULTA LTKAKR USKE MUH ME LODA DEDUGA",
+"TERI MUMMY KO DEEPTHROAT DEDUGA MADARCHOD K BACHE",
+"TERA PAPA BHI RANDI KI AULAD H BSDK",
+"TERI MUMMY KO YOGA SIKHADUGA AUR USKO DIFFERENT STYLES ME CHODUGA",
+"TERA PAPA HU MAI TERI MUMMY KA BF JIS S VO CHUDKR GYI THI",
+"TERI MAA KI PUSSY ME SCOOTER DALDUGA BAHEN KE LODE",
+"TERI MAA KI CHUT ME BIHARI GUTKA KHAKR THUK KR CHALE GYE THE",
+"TERI MAA KA BOSDA RANDI K BEEJ",
+"TERI MAA KI CHUT ME 2 FINGER DEKR USKA PAANI NIKALDUGA",
+"TERI MAA K MUH ME GAS PIPE DEKR USKI GAAND ME FIRE LGAKR TERE BAAP KI GAAND JALAUGA",
+"TERI RANDI MAA KO CHODKR MAINE GB ROAD PR BEACH DIYA THA",
+"TERI MUMMY K HAATH DIVAR PR LGVADIYE THE 10 BIHARIYO NE",
+"TERI MAA KO TORRENT BANAKER SEED KAR DUNGA",
+"TERI MAA KE BHOSDE ME FIREWALL LAGA DUNGA",
+"TERI MAA KI CHUT ME SSD BOOT KAR DUNGA",
+"TERI MAA BHOSDE ME NFT MINT KAR DUNGA",
+"TERI MAA KA LUND OLX PE BECH DUNGA",
+"TERI MAA KI GAAND ME QR CODE CHIPKA DUNGA",
+"TERI MAA KA ONLYFANS LIVE KAR DUNGA",
+"TERI LAGE KO TORRENT BANAKER SEED KAR DUNGA",
+"TERI LAGE KE BHOSDE ME FIREWALL LAGA DUNGA",
+"TERI LAGE KI CHUT ME SSD BOOT KAR DUNGA",
+"TERI BEHEN KO TORRENT BANAKER SEED KAR DUNGA",
+"TERI BEHEN KE BHOSDE ME FIREWALL LAGA DUNGA",
+"TERI BEHEN KI CHUT ME SSD BOOT KAR DUNGA",
+"TERI BEHEN KA LUND OLX PE BECH DUNGA",
+"TERI BEHEN KI GAAND ME QR CODE CHIPKA DUNGA",
+"TERI BEHEN KA BHOSDA NFT ME MINT KAR DUNGA",
+"TERI BEHEN KA ONLYFANS LIVE KAR DUNGA",
+"TERI BEHEN KO ZIP FILE ME COMPRESS KAR DUNGA",
+"TERI BEHEN KE BHOSDE ME PYTHON RUN KAR DUNGA",
+"TERI BEHEN KE LODE KO AIRDROP KAR DUNGA",
+"TERI BEHEN KO BARCODE LAGA KE SCAN KARWA DUNGA",
+"TERI BEHEN KO AI TOOL SE UPSCALE KAR DUNGA",
+"TERE BAAP KO TORRENT BANAKER SEED KAR DUNGA",
+"TERE BAAP KE BHOSDE ME FIREWALL LAGA DUNGA",
+"TERE BAAP KI CHUT ME SSD BOOT KAR DUNGA",
+"TERE BAAP KA LUND OLX PE BECH DUNGA",
+"TERE BAAP KI GAAND ME QR CODE CHIPKA DUNGA",
+"TERE BAAP KA BHOSDA NFT ME MINT KAR DUNGA",
+"TERE BAAP KA ONLYFANS LIVE KAR DUNGA",
+"TERE BAAP KO ZIP FILE ME COMPRESS KAR DUNGA",
+"TERE BAAP KE BHOSDE ME PYTHON RUN KAR DUNGA",
+"TERE BAAP KE LODE KO AIRDROP KAR DUNGA",
+"TERE BAAP KO BARCODE LAGA KE SCAN KARWA DUNGA",
+"TERE BAAP KO AI TOOL SE UPSCALE KAR DUNGA",
+"TERI FAMILY KO TORRENT BANAKER SEED KAR DUNGA",
+"TERI FAMILY KE BHOSDE ME FIREWALL LAGA DUNGA",
+"TERI FAMILY KI CHUT ME SSD BOOT KAR DUNGA",
+"TERI FAMILY KA LUND OLX PE BECH DUNGA",
+"TERI FAMILY KI GAAND ME QR CODE CHIPKA DUNGA",
+"TERI FAMILY KA BHOSDA NFT ME MINT KAR DUNGA",
+"TERI FAMILY KA ONLYFANS LIVE KAR DUNGA",
+"TERI FAMILY KO ZIP FILE ME COMPRESS KAR DUNGA",
+"TERI FAMILY KE BHOSDE ME PYTHON RUN KAR DUNGA",
+"TERI FAMILY KE LODE KO AIRDROP KAR DUNGA",
+"TERI FAMILY KO BARCODE LAGA KE SCAN KARWA DUNGA",
+"TERI FAMILY KO AI TOOL SE UPSCALE KAR DUNGA",
+"TERE KUTTE KO TORRENT BANAKER SEED KAR DUNGA",
+"TERE KUTTE KE BHOSDE ME FIREWALL LAGA DUNGA",
+"TERE KUTTE KI CHUT ME SSD BOOT KAR DUNGA",
+"TERE KUTTE KA LUND OLX PE BECH DUNGA",
+"TERE KUTTE KI GAAND ME QR CODE CHIPKA DUNGA",
+"TERE KUTTE KA BHOSDA NFT ME MINT KAR DUNGA",
+"TERE KUTTE KA ONLYFANS LIVE KAR DUNGA",
+"TERE KUTTE KO ZIP FILE ME COMPRESS KAR DUNGA",
+"TERE KUTTE KE BHOSDE ME PYTHON RUN KAR DUNGA",
+"TERE KUTTE KE LODE KO AIRDROP KAR DUNGA",
+"TERE KUTTE KO BARCODE LAGA KE SCAN KARWA DUNGA",
+"TERE KUTTE KO AI TOOL SE UPSCALE KAR DUNGA",
+"TERI AUKAAT KO TORRENT BANAKER SEED KAR DUNGA",
+"TERI AUKAAT KE BHOSDE ME FIREWALL LAGA DUNGA",
+"TERI AUKAAT KI CHUT ME SSD BOOT KAR DUNGA",
+"TERI AUKAAT KA LUND OLX PE BECH DUNGA",
+"TERI AUKAAT KI GAAND ME QR CODE CHIPKA DUNGA",
+"TERI AUKAAT KA BHOSDA NFT ME MINT KAR DUNGA",
+"TERI AUKAAT KA ONLYFANS LIVE KAR DUNGA",
+"TERI AUKAAT KO ZIP FILE ME COMPRESS KAR DUNGA",
+"TERI AUKAAT KE BHOSDE ME PYTHON RUN KAR DUNGA",
+"TERI AUKAAT KE LODE KO AIRDROP KAR DUNGA",
+"TERI AUKAAT KO BARCODE LAGA KE SCAN KARWA DUNGA",
+"TERI AUKAAT KO AI TOOL SE UPSCALE KAR DUNGA",
+"TERI MUMMY KO TORRENT BANAKER SEED KAR DUNGA",
+"TERI MUMMY KE BHOSDE ME FIREWALL LAGA DUNGA",
+"TERI MUMMY KI CHUT ME SSD BOOT KAR DUNGA",
+"TERI MUMMY KA LUND OLX PE BECH DUNGA",
+"TERI MUMMY KI GAAND ME QR CODE CHIPKA DUNGA",
+"TERI MUMMY KA BHOSDA NFT ME MINT KAR DUNGA",
+"TERI MUMMY KA ONLYFANS LIVE KAR DUNGA",
+"TERI MUMMY KO ZIP FILE ME COMPRESS KAR DUNGA",
+"TERI MUMMY KE BHOSDE ME PYTHON RUN KAR DUNGA",
+"TERI MUMMY KE LODE KO AIRDROP KAR DUNGA",
+"TERI MUMMY KO BARCODE LAGA KE SCAN KARWA DUNGA",
+"TERI MUMMY KO AI TOOL SE UPSCALE KAR DUNGA",
+"TERE DADA KO TORRENT BANAKER SEED KAR DUNGA",
+"TERE DADA KE BHOSDE ME FIREWALL LAGA DUNGA",
+"TERE DADA KI CHUT ME SSD BOOT KAR DUNGA",
+"TERE DADA KA LUND OLX PE BECH DUNGA",
+"TERE DADA KI GAAND ME QR CODE CHIPKA DUNGA",
+"TERE DADA KA BHOSDA NFT ME MINT KAR DUNGA",
+"TERE DADA KA ONLYFANS LIVE KAR DUNGA",
+"TERE DADA KO ZIP FILE ME COMPRESS KAR DUNGA",
+"TERE DADA KE BHOSDE ME PYTHON RUN KAR DUNGA",
+"TERE DADA KE LODE KO AIRDROP KAR DUNGA",
+"TERE DADA KO BARCODE LAGA KE SCAN KARWA DUNGA",
+"TERE DADA KO AI TOOL SE UPSCALE KAR DUNGA"
+]
 
-#Load saved data
-def load_data():
-global sudo_users, custom_stickers, shayari_data
-try:
-if os.path.exists("sudo_users.json"):
-with open("sudo_users.json", "r") as f:
-sudo_users = set(json.load(f))
-if os.path.exists("custom_stickers.json"):
-with open("custom_stickers.json", "r") as f:
-custom_stickers = json.load(f)
-if os.path.exists("shayari_data.json"):
-with open("shayari_data.json", "r") as f:
-shayari_data = json.load(f)
-except Exception as e:
-print(f"Error loading data: {e}")
-
-def save_data():
-with open("sudo_users.json", "w") as f:
-json.dump(list(sudo_users), f)
-with open("custom_stickers.json", "w") as f:
-json.dump(custom_stickers, f)
-with open("shayari_data.json", "w") as f:
-json.dump(shayari_data, f)
-
-Initialize default shayari
-def init_shayari():
-for category in default_shayari:
-if not shayari_data.get(category):
-shayari_data[category] = default_shayari[category]
-save_data()
-
-#=============== BUTTONS ================
-def get_main_keyboard():
-keyboard = InlineKeyboardMarkup([
-[InlineKeyboardButton("➕ Add Me Baby", url=f"https://t.me/{BOT_USERNAME}?startgroup=true")],
-[InlineKeyboardButton("🏠 My Home", callback_data="home")],
-[InlineKeyboardButton("👑 My Master", url=f"https://t.me/ll_SUPRRME_XD_ll")],
-[InlineKeyboardButton("❓ Help", callback_data="help")],
-[InlineKeyboardButton("⚡ Get Sudo", url=f"https://t.me/ll_SUPRRME_XD_ll")]
-])
-return keyboard
-
-#=============== START COMMAND ================
-@app.on_message(filters.command("start"))
-async def start_command(client, message: Message):
-user = message.from_user
-await message.reply_text(
-f"🔥 Welcome {user.first_name}! 🔥\n\n"
-f"I'm a powerful group management bot.\n\n"
-f"Use buttons below to explore!",
-reply_markup=get_main_keyboard()
-)
-
-#=============== BUTTON CALLBACK HANDLER ================
-@app.on_callback_query()
-async def button_callback(client, callback_query):
-data = callback_query.data
-
-if data == "help":
-help_text = """
-🤖 BOT COMMANDS 🤖
-
-📊 Utility:
-• .alive - Check bot status
-• .ping - Check bot speed
-• .speed - Bot response time
-
-💬 Shayari:
-• .love - Love shayari
-• .sad - Sad shayari
-• .shayari - General shayari
-• .birthday - Birthday wishes
-• .addshayari - Add shayari
-
-⚡ Sudo Commands:
-• .mute - Mute user globally
-• .unmute - Unmute user
-• .sticker - Sticker spam
-• .stopraid - Stop sticker spam
-• .spam - Spam user
-• .stopspam - Stop spam
-
-👑 Owner Only:
-• .addsticker - Add sticker
-• .addsudo - Add sudo user
-• .removesudo - Remove sudo user
-• .sudolist - List sudo users
-• .mutelist - List muted users
-"""
-await callback_query.message.edit_text(
-help_text,
-reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
-)
-
-elif data == "back":
-await callback_query.message.edit_text(
-f"🔥 Welcome Back! 🔥\n\nUse buttons below to explore!",
-reply_markup=get_main_keyboard()
-)
-
-elif data == "home":
-await callback_query.message.edit_text(
-f"🏠 My Home\n\n"
-f"📊 Bot Stats:\n"
-f"• Sudo Users: {len(sudo_users)}\n"
-f"• Muted Users: {len(muted_users)}\n"
-f"• Stickers: {len(custom_stickers)}\n"
-f"• Status: Active 🟢\n\n"
-f"👑 Owner:{OWNER_ID}",
-reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
-)
-
-await callback_query.answer()
-
-#Commands for everyone
-@app.on_message(filters.command("alive", prefixes=[".", "/"]) & filters.group)
-
-async def alive_command(client, message: Message):
-await message.reply_text("✅ Bot is Online! 🚀")
-
-@app.on_message(filters.command("ping", prefixes=[".", "/"]) & filters.group)
-
-async def ping_command(client, message: Message):
-start = time.time()
-msg = await message.reply_text("🏓 Pinging...")
-end = time.time()
-ping_time = round((end - start) * 1000)
-await msg.edit_text(f"🏓 Pong!\n⏱️ {ping_time}ms")
-
-@app.on_message(filters.command("speed", prefixes=[".", "/"]) & filters.group)
-
-async def speed_command(client, message: Message):
-start = time.time()
-msg = await message.reply_text("⚡ Checking speed...")
-end = time.time()
-response_time = round((end - start) * 1000)
-await msg.edit_text(f"⚡ Bot Speed\n📡 Response Time: {response_time}ms\n🚀 Status: Super Fast!")
-
-#Sudo-only commands
+# ==================== ADVANCED AUTHENTICATION MATRICES ====================
 def is_sudo(user_id):
-return user_id in sudo_users
-
-@app.on_message(filters.command("mute", prefixes=[".", "/"]) & filters.group)
-
-async def mute_command(client, message: Message):
-if not is_sudo(message.from_user.id):
-await message.reply_text("❌ Only sudo users can use this command!")
-return
-
-if not message.reply_to_message:
-await message.reply_text("❌ Please reply to a user to mute them!")
-return
-
-target_user = message.reply_to_message.from_user
-muted_users.add(target_user.id)
-save_data()
-await message.reply_text(f"✅ {mention} has been muted!")
-
-@app.on_message(filters.command("unmute", prefixes=[".", "/"]) & filters.group)
-
-async def unmute_command(client, message: Message):
-if not is_sudo(message.from_user.id):
-await message.reply_text("❌ Only sudo users can use this command!")
-return
-
-if not message.reply_to_message:
-await message.reply_text("❌ Please reply to a user to unmute them!")
-return
-
-target_user = message.reply_to_message.from_user
-if target_user.id in muted_users:
-muted_users.remove(target_user.id)
-save_data()
-await message.reply_text(f"✅ {mention} has been unmuted!")
-else:
-await message.reply_text(f"❌ {target_user.first_name} is not muted!")
-
-@app.on_message(filters.command("mutelist", prefixes=[".", "/"]) & filters.group)
-
-async def mutelist_command(client, message: Message):
-if not is_sudo(message.from_user.id):
-await message.reply_text("❌ Only sudo users can use this command!")
-return
-
-if not muted_users:
-await message.reply_text("📝 No users are muted currently!")
-return
-
-muted_list = "🔇 Muted Users List\n\n"
-for user_id in muted_users:
-try:
-user = await client.get_users(user_id)
-muted_list += f"• {user.first_name} ({user_id})\n"
-except:
-muted_list += f"• Unknown User ({user_id})\n"
-
-await message.reply_text(muted_list)
-
-#Sticker spam command
-@app.on_message(filters.command("sticker", prefixes=[".", "/"]) & filters.group)
-
-async def sticker_spam_command(client, message: Message):
-if not is_sudo(message.from_user.id):
-await message.reply_text("❌ Only sudo users can use this command!")
-return
-
-global sticker_spam_active
-
-parts = message.text.split()
-if len(parts) != 2:
-await message.reply_text("❌ Usage: .sticker <count>\nExample: .sticker 50")
-return
-
-try:
-count = int(parts[1])
-if count > 100:
-await message.reply_text("❌ Max limit is 100!")
-return
-except:
-await message.reply_text("❌ Please provide a valid number!")
-return
-
-sticker_spam_active = True
-
-if not custom_stickers:
-await message.reply_text("❌ No stickers added yet!\nUse .addsticker to add stickers.")
-return
-
-for i in range(count):
-if not sticker_spam_active:
-break
-sticker = random.choice(custom_stickers)
-await message.reply_sticker(sticker)
-await asyncio.sleep(0.1)
-
-sticker_spam_active = False
-
-@app.on_message(filters.command("stopraid", prefixes=[".", "/"]) & filters.group)
-
-async def stop_raid_command(client, message: Message):
-if not is_sudo(message.from_user.id):
-await message.reply_text("❌ Only sudo users can use this command!")
-return
-
-global sticker_spam_active
-sticker_spam_active = False
-await message.reply_text("🛑 Sticker raid stopped!")
-
-#Shayari commands
-@app.on_message(filters.command("love"))
-async def love_command(client, message: Message):
-if shayari_data["love"]:
-shayari = random.choice(shayari_data["love"])
-await message.reply_text(f"💕 Love Shayari 💕\n\n{shayari}")
-
-@app.on_message(filters.command("sad"))
-async def sad_command(client, message: Message):
-if shayari_data["sad"]:
-shayari = random.choice(shayari_data["sad"])
-await message.reply_text(f"🥀 Sad Shayari 🥀\n\n{shayari}")
-
-@app.on_message(filters.command("shayari"))
-async def general_shayari_command(client, message: Message):
-if shayari_data["general"]:
-shayari = random.choice(shayari_data["general"])
-await message.reply_text(f"✨ Shayari ✨\n\n{shayari}")
-
-@app.on_message(filters.command("birthday"))
-async def birthday_command(client, message: Message):
-if shayari_data["birthday"]:
-shayari = random.choice(shayari_data["birthday"])
-await message.reply_text(f"🎂 Birthday Shayari 🎂\n\n{shayari}")
-
-@app.on_message(filters.command("addshayari"))
-async def add_shayari_command(client, message: Message):
-if not is_sudo(message.from_user.id):
-await message.reply_text("❌ Only sudo users can add shayari!")
-return
-
-parts = message.text.split(" ", 2)
-if len(parts) < 3:
-await message.reply_text("❌ Usage: .addshayari <love/sad/birthday/general> <shayari>")
-return
-
-category = parts[1].lower()
-shayari_text = parts[2]
-
-if category in shayari_data:
-shayari_data[category].append(shayari_text)
-save_data()
-await message.reply_text(f"✅ Shayari added to {category} category!")
-else:
-await message.reply_text("❌ Category must be: love, sad, birthday, or general")
-
-#Spam tag command
-@app.on_message(filters.command("spam", prefixes=[".", "/"]) & filters.group)
-
-async def spam_command(client, message: Message):
-if not is_sudo(message.from_user.id):
-await message.reply_text("❌ Only sudo users can use this command!")
-return
-
-if not message.reply_to_message:
-await message.reply_text("❌ Reply to a user and use: .spam <count> <message>")
-return
-
-parts = message.text.split(" ", 2)
-
-if len(parts) < 3:
-await message.reply_text("❌ Usage: .spam <count> <message>")
-return
-
-try:
-count = int(parts[1])
-if count > 100:
-await message.reply_text("❌ Max limit is 100!")
-return
-except:
-await message.reply_text("❌ Invalid number!")
-return
-
-target = message.reply_to_message.from_user
-mention = target.mention
-custom_text = parts[2]
-
-for i in range(count):
-await message.reply_text(f"{mention} {custom_text}")
-await asyncio.sleep(0.1)
-
-await message.reply_text(f"✅ Spam completed: {count} times!")
-
-
-try:
-count = int(parts[1])
-if count > 100:
-await message.reply_text("❌ Max spam count is 100!")
-return
-except:
-await message.reply_text("❌ Please provide a valid number!")
-return
-
-target = message.reply_to_message.from_user
-spam_target = target.id
-spam_count = count
-spam_active = True
-
-for i in range(count):
-if not spam_active:
-break
-await message.reply_text(f"{target.first_name}")
-await asyncio.sleep(0.1)
-
-spam_active = False
-await message.reply_text(f"✅ Spammed {count} times!")
-
-@app.on_message(filters.command("stopspam", prefixes=[".", "/"]) & filters.group)
-
-async def stop_spam_command(client, message: Message):
-if not is_sudo(message.from_user.id):
-await message.reply_text("❌ Only sudo users can use this command!")
-return
-
-global spam_active
-spam_active = False
-await message.reply_text("🛑 Spam stopped!")
-
-#Owner-only commands
-@app.on_message(filters.command("addsticker", prefixes=[".", "/"]) & filters.group)
-
-async def add_sticker_command(client, message: Message):
-if message.from_user.id != OWNER_ID:
-await message.reply_text("❌ Only owner can use this command!")
-return
-
-if not message.reply_to_message or not message.reply_to_message.sticker:
-await message.reply_text("❌ Please reply to a sticker to add it!")
-return
-
-sticker_id = message.reply_to_message.sticker.file_id
-custom_stickers.append(sticker_id)
-save_data()
-await message.reply_text(f"✅ Sticker added!\nTotal stickers: {len(custom_stickers)}")
-
-@app.on_message(filters.command("addsudo", prefixes=[".", "/"]) & filters.group)
-
-async def add_sudo_command(client, message: Message):
-if message.from_user.id != OWNER_ID:
-await message.reply_text("❌ Only owner can add sudo users!")
-return
-
-user_id = None
-
-if message.reply_to_message:
-user_id = message.reply_to_message.from_user.id
-elif len(message.command) > 1:
-try:
-user_id = int(message.command[1])
-except:
-await message.reply_text("❌ Invalid user ID!")
-return
-
-if user_id:
-sudo_users.add(user_id)
-save_data()
-user = await client.get_users(user_id)
-await message.reply_text(f"✅ {user.first_name} added as sudo user!")
-else:
-await message.reply_text("❌ Reply to a user or provide user ID!")
-
-@app.on_message(filters.command("removesudo", prefixes=[".", "/"]) & filters.group)
-
-async def remove_sudo_command(client, message: Message):
-if message.from_user.id != OWNER_ID:
-await message.reply_text("❌ Only owner can remove sudo users!")
-return
-
-user_id = None
-
-if message.reply_to_message:
-user_id = message.reply_to_message.from_user.id
-elif len(message.command) > 1:
-try:
-user_id = int(message.command[1])
-except:
-await message.reply_text("❌ Invalid user ID!")
-return
-
-if user_id and user_id in sudo_users and user_id != OWNER_ID:
-sudo_users.remove(user_id)
-save_data()
-user = await client.get_users(user_id)
-await message.reply_text(f"✅ {user.first_name} removed from sudo users!")
-else:
-await message.reply_text("❌ User not found in sudo list or cannot remove owner!")
-
-@app.on_message(filters.command("sudolist", prefixes=[".", "/"]) & filters.group)
-
-async def sudo_list_command(client, message: Message):
-if not is_sudo(message.from_user.id):
-await message.reply_text("❌ Only sudo users can use this command!")
-return
-
-if not sudo_users:
-await message.reply_text("📝 No sudo users found!")
-return
-
-sudo_list = "👑 Sudo Users List\n\n"
-for user_id in sudo_users:
-try:
-user = await client.get_users(user_id)
-sudo_list += f"• {user.first_name}\n ┗ ID: {user_id}\n"
-except:
-sudo_list += f"• Unknown User\n ┗ ID: {user_id}\n"
-
-await message.reply_text(sudo_list)
-
-Message handler for logging and muting
-@app.on_message(filters.group)
-async def message_handler(client, message: Message):
-
-try:
-log_text = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-log_text += f"User: {message.from_user.first_name} [{message.from_user.id}] | "
-log_text += f"Group: {message.chat.title} | "
-
-if message.text:
-log_text += f"Text: {message.text[:100]}"
-elif message.sticker:
-log_text += f"Sticker sent"
-
-print(log_text)
-except:
-pass
-
-# ✅ SAFE CHECK (ADD THIS BLOCK)
-if not message.from_user:
-return
-
-user_id = message.from_user.id
-
-# 🚫 OWNER & SUDO PROTECTION (IMPORTANT)
-if user_id == OWNER_ID:
-return
-
-if user_id in sudo_users:
-return
-
-# ❌ ONLY MUTED USERS WILL BE DELETED
-if user_id in muted_users:
-try:
-await message.delete()
-except:
-pass
-
-# Log message
-try:
-log_text = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-log_text += f"User: {message.from_user.first_name} [{message.from_user.id}] | "
-log_text += f"Group: {message.chat.title} | "
-if message.text:
-log_text += f"Text: {message.text[:100]}"
-elif message.sticker:
-log_text += f"Sticker sent"
-print(log_text)
-except:
-pass
-
-# Delete muted user messages
-if message.from_user and message.from_user.id in muted_users:
-try:
-await message.delete()
-print(f"Deleted message from muted user: {message.from_user.first_name}")
-except:
-pass
-
-Start bot
-def main():
-load_data()
-init_shayari()
-
-# Add owner to sudo if not present
-if OWNER_ID not in sudo_users:
-sudo_users.add(OWNER_ID)
-save_data()
-
-print("🚀 Bot Started Successfully!")
-print("✅ All features loaded!")
-print("📝 Check logs for group messages")
-print(f"👑 Owner ID: {OWNER_ID}")
-print(f"📊 Sudo Users: {len(sudo_users)}")
-
-app.run()
-
-if name == "__main__":
-main()
-
+    cursor.execute("SELECT user_id FROM sudo WHERE user_id=?", (user_id,))
+    return cursor.fetchone() is not None
+
+def is_muted(user_id):
+    cursor.execute("SELECT user_id FROM mute WHERE user_id=?", (user_id,))
+    return cursor.fetchone() is not None
+
+def is_banned(user_id):
+    cursor.execute("SELECT user_id FROM banned WHERE user_id=?", (user_id,))
+    return cursor.fetchone() is not None
+
+def is_supreme(user_id):
+    return user_id == OWNER_ID
+
+def is_authorized(user_id):
+    return is_supreme(user_id) or is_sudo(user_id)
+
+def get_closest_match(wrong_cmd):
+    for cmd in COMMAND_REGISTRY.keys():
+        if wrong_cmd in cmd or cmd in wrong_cmd:
+            return cmd
+    return None
+
+# ==================== DEEP REAL TAG ENGINE (HACK MENTION) ====================
+async def send_real_mention(context, chat_id, target_user, line_text):
+    """
+    This function generates a real hard-coded text_mention entity.
+    It forces Telegram to trigger a real notification/vibration ping on target's phone!
+    """
+    display_text = f"⚡ {target_user.first_name} {line_text}"
+    entity = MessageEntity(
+        type=MessageEntity.TEXT_MENTION,
+        offset=2,
+        length=len(target_user.first_name),
+        user=target_user
+    )
+    await context.bot.send_message(chat_id=chat_id, text=display_text, entities=[entity])
+
+# ==================== ASYNC MULTI-THREAD FLOOD EXECUTORS ====================
+async def run_standard_raid(context: ContextTypes.DEFAULT_TYPE):
+    global raid_active, current_raid_chat, current_raid_target
+    idx = 0
+    while raid_active and current_raid_target:
+        try:
+            line = RAID_LINES[idx % len(RAID_LINES)]
+            await send_real_mention(context, current_raid_chat, current_raid_target, line)
+            idx += 1
+            await asyncio.sleep(0.35)
+        except Exception:
+            await asyncio.sleep(0.5)
+
+async def run_nuclear_sraid(context: ContextTypes.DEFAULT_TYPE):
+    global sraid_active, current_raid_chat, current_raid_target
+    idx = 0
+    while sraid_active and current_raid_target:
+        try:
+            tasks = []
+            for _ in range(8):  # Parallel Execution Pipeline
+                line = RAID_LINES[idx % len(RAID_LINES)]
+                tasks.append(send_real_mention(context, current_raid_chat, current_raid_target, line))
+                idx += 1
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.sleep(0.05)  # Lightspeed Burst Interval
+        except Exception:
+            await asyncio.sleep(0.2)
+
+async def run_burst_spam(context: ContextTypes.DEFAULT_TYPE, chat_id, text_to_spam, count):
+    global spam_active
+    sent = 0
+    while spam_active and sent < count:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=text_to_spam)
+            sent += 1
+            await asyncio.sleep(0.12)
+        except Exception:
+            await asyncio.sleep(0.4)
+    spam_active = False
+
+# ==================== INTERACTIVE USER INTERFACES ====================
+def get_main_dashboard():
+    keyboard = [
+        [InlineKeyboardButton("⚡ ADD ME TO GROUPS ⚡", url=f"https://t.me/{BOT_USERNAME}?startgroup=true")],
+        [InlineKeyboardButton("📊 OVERVIEW STATS", callback_data="cb_stats"),
+         InlineKeyboardButton("💬 SHAYARI MENU", callback_data="cb_shayari")],
+        [InlineKeyboardButton("📜 ALL COMMAND MATRIX", callback_data="cb_all_cmds")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_back_markup():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 RETURN TO MATRIX", callback_data="cb_main")]])
+
+async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "cb_main":
+        start_msg = "🔱 <b>ITACHI SUPREME DESTRUCTION ENGINE ONLINE</b> 🔱\n\n• Core Lord: <b>ITACHI SAMA</b>\n• Protocol Level: <b>MAXIMUM OVERLOAD TERMINAL</b>\n\nSelect control cluster below:"
+        await query.edit_message_text(start_msg, reply_markup=get_main_dashboard(), parse_mode="HTML")
+        
+    elif query.data == "cb_stats":
+        cursor.execute("SELECT COUNT(*) FROM sudo")
+        s_cnt = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM mute")
+        m_cnt = cursor.fetchone()[0]
+        uptime = datetime.now() - bot_start_time
+        text = f"📊 <b>ENGINE STATUS LOGS</b> 📊\n\n• Verified Sudo Layers: <code>{s_cnt}</code>\n• Restricted Nodes: <code>{m_cnt}</code>\n• Total Commands: <code>{len(COMMAND_REGISTRY)}</code>\n• Kernel Uptime: <code>{uptime.seconds // 60} minutes</code>"
+        await query.edit_message_text(text, reply_markup=get_back_markup(), parse_mode="HTML")
+        
+    elif query.data == "cb_shayari":
+        text = "💬 <b>SHAYARI SECTOR INTERFACE</b> 💬\n\n• Use <code>.love</code> inside chat for love elements.\n• Use <code>.sad</code> inside chat for broken elements.\n• Use <code>.shayari</code> for standard text arrays.\n• Inject lines via <code>.addshayari [category] [text]</code>"
+        await query.edit_message_text(text, reply_markup=get_back_markup(), parse_mode="HTML")
+        
+    elif query.data == "cb_all_cmds":
+        text = "📜 <b>COMPLETE 35 SYSTEM COMMAND CATALOGUE</b> 📜\n\n"
+        for idx, (cmd, desc) in enumerate(COMMAND_REGISTRY.items(), start=1):
+            text += f"<code>{idx}.</code> <b>{cmd}</b> ➔ <i>{desc}</i>\n"
+        await query.edit_message_text(text, reply_markup=get_back_markup(), parse_mode="HTML")
+
+# ==================== CENTRAL ROUTING TERMINAL ====================
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global raid_active, sraid_active, spam_active, ghost_active, echo_active, current_raid_chat, current_raid_target
+    
+    if not update.message: return
+    user = update.message.from_user
+    chat_id = update.effective_chat.id
+    text = update.message.text.strip() if update.message.text else ""
+    
+    # 1. Structural Quarantine Filtering
+    if (is_banned(user.id) or is_muted(user.id)) and not is_supreme(user.id):
+        try: await update.message.delete()
+        except Exception: pass
+        return
+        
+    if text == "/start":
+        start_msg = "🔱 <b>ITACHI SUPREME DESTRUCTION ENGINE ONLINE</b> 🔱\n\n• Core Lord: <b>ITACHI SAMA</b>\n• Protocol Level: <b>MAXIMUM OVERLOAD TERMINAL</b>\n\nSelect control cluster below:"
+        await update.message.reply_text(start_msg, reply_markup=get_main_dashboard(), parse_mode="HTML")
+        return
+        
+    if not text.startswith('.'):
+        return
+        
+    parts = text.split(maxsplit=1)
+    command = parts[0].lower()
+    
+    # 2. Advanced Error Handling & Recommendation Engine
+    if command not in COMMAND_REGISTRY:
+        match = get_closest_match(command)
+        if match:
+            await update.message.reply_text(f"🛑 <b>SYSTEM ANOMALY</b>: Command <code>{command}</code> does not exist.\n💡 <i>Did you mean to trigger:</i> <code>{match}</code>?", parse_mode="HTML")
+        else:
+            await update.message.reply_text(f"❌ <b>CRITICAL ERROR</b>: Packet reference <code>{command}</code> rejected by Itachi Core.", parse_mode="HTML")
+        return
+        
+    if not is_authorized(user.id):
+        await update.message.reply_text("🚫 <b>CORE OVERRIDE DENIED:</b> You are not Itachi Sama. Access locked.")
+        return
+        
+    # ==================== INDIVIDUAL PROTOCOL LOGIC BLOCK ====================
+    try:
+        # Loop Killers / Alternates
+        if command in [".stopraid", ".s"]:
+            raid_active = False
+            sraid_active = False
+            current_raid_chat = None
+            current_raid_target = None
+            await update.message.reply_text("🛑 <b>[ ALL RAID PIPELINES EXTERMINATED SUCCESSFULLY ]</b>", parse_mode="HTML")
+            return
+
+        elif command == ".stopspam":
+            spam_active = False
+            await update.message.reply_text("🛑 <b>[ SPAM ENGINE FORCED TO STAND DOWN ]</b>", parse_mode="HTML")
+            return
+
+        elif command == ".alive":
+            await update.message.reply_text("⚡ <code>[ITACHI SYSTEM PULSE: EXTREME ONLINE]</code>", parse_mode="HTML")
+            return
+
+        elif command == ".ping":
+            st = time.time()
+            m = await update.message.reply_text("<code>📡 Querying proxy infrastructure...</code>", parse_mode="HTML")
+            await m.edit_text(f"📡 <b>LATENCY INTERCEPTED:</b> <code>{(time.time()-st)*1000:.1f} ms</code>", parse_mode="HTML")
+            return
+
+        elif command == ".speed":
+            st = time.time()
+            m = await update.message.reply_text("<code>⚡ Measuring data pipeline bus speed...</code>", parse_mode="HTML")
+            await m.edit_text(f"⚡ <b>EXECUTION SPEED:</b> <code>{(time.time()-st)*1000:.1f} ms</code>\n• State: <b>LIGHTSPEED MAXIMUM</b>", parse_mode="HTML")
+            return
+
+        # Raid Direct Link Injections (Real hard tags)
+        elif command == ".raid":
+            if not update.message.reply_to_message:
+                await update.message.reply_text("❌ Reply to a profile node to trigger targeted raid arrays.")
+                return
+            if raid_active or sraid_active: return
+            raid_active = True
+            current_raid_chat = chat_id
+            current_raid_target = update.message.reply_to_message.from_user
+            await update.message.reply_text("💣 <b>REAL HARD TARGET REAL-TAG FLOOD RUNNING...</b>", parse_mode="HTML")
+            asyncio.create_task(run_standard_raid(context))
+            return
+
+        elif command == ".sraid":
+            if not update.message.reply_to_message:
+                await update.message.reply_text("❌ Reply to target profile node to execute nuclear speed flood.")
+                return
+            if raid_active or sraid_active: return
+            sraid_active = True
+            current_raid_chat = chat_id
+            current_raid_target = update.message.reply_to_message.from_user
+            await update.message.reply_text("💀 <b>MAX PROTOCOL MULTI-THREAD REAL TARGET ASSAULT INITIALIZED...</b>", parse_mode="HTML")
+            asyncio.create_task(run_nuclear_sraid(context))
+            return
+
+        elif command == ".spam":
+            if len(parts) < 2: return
+            sub_p = parts[1].split(maxsplit=1)
+            if len(sub_p) < 2 or not sub_p[0].isdigit(): return
+            spam_active = True
+            asyncio.create_task(run_burst_spam(context, chat_id, sub_p[1], int(sub_p[0])))
+            return
+
+        # Mute / Administration System Controls
+        elif command == ".mute":
+            if not update.message.reply_to_message: return
+            tgt = update.message.reply_to_message.from_user
+            if is_supreme(tgt.id): return
+            cursor.execute("INSERT OR IGNORE INTO mute VALUES (?)", (tgt.id,))
+            db.commit()
+            await update.message.reply_text(f"🔇 <b>Node <a href='tg://user?id={tgt.id}'>{tgt.first_name}</a> silenced in deep memory database.</b>", parse_mode="HTML")
+            return
+
+        elif command == ".unmute":
+            if not update.message.reply_to_message: return
+            tgt = update.message.reply_to_message.from_user
+            cursor.execute("DELETE FROM mute WHERE user_id=?", (tgt.id,))
+            db.commit()
+            await update.message.reply_text(f"🔊 <b>Node <a href='tg://user?id={tgt.id}'>{tgt.first_name}</a> transmission stream cleared.</b>", parse_mode="HTML")
+            return
+
+        elif command == ".kick":
+            if not is_supreme(user.id): return
+            if not update.message.reply_to_message: return
+            tgt = update.message.reply_to_message.from_user
+            await context.bot.ban_chat_member(chat_id=chat_id, user_id=tgt.id)
+            await context.bot.unban_chat_member(chat_id=chat_id, user_id=tgt.id)
+            await update.message.reply_text(f"⚡ <b>Node <a href='tg://user?id={tgt.id}'>{tgt.first_name}</a> dropped from connection instance.</b>", parse_mode="HTML")
+            return
+
+        elif command == ".ban":
+            if not is_supreme(user.id): return
+            if not update.message.reply_to_message: return
+            tgt = update.message.reply_to_message.from_user
+            if is_supreme(tgt.id): return
+            await context.bot.ban_chat_member(chat_id=chat_id, user_id=tgt.id)
+            cursor.execute("INSERT OR IGNORE INTO banned VALUES (?)", (tgt.id,))
+            db.commit()
+            await update.message.reply_text(f"🔨 <b>Profile <a href='tg://user?id={tgt.id}'>{tgt.first_name}</a> blacklisted permanently from server.</b>", parse_mode="HTML")
+            return
+
+        elif command == ".unban":
+            if not is_supreme(user.id): return
+            if not update.message.reply_to_message: return
+            tgt = update.message.reply_to_message.from_user
+            await context.bot.unban_chat_member(chat_id=chat_id, user_id=tgt.id)
+            cursor.execute("DELETE FROM banned WHERE user_id=?", (tgt.id,))
+            db.commit()
+            await update.message.reply_text(f"🔓 <b>Profile <a href='tg://user?id={tgt.id}'>{tgt.first_name}</a> clearance keys re-authorized.</b>", parse_mode="HTML")
+            return
+
+        elif command == ".addsudo":
+            if not is_supreme(user.id): return
+            if not update.message.reply_to_message: return
+            tgt = update.message.reply_to_message.from_user
+            cursor.execute("INSERT OR IGNORE INTO sudo VALUES (?)", (tgt.id,))
+            db.commit()
+            await update.message.reply_text(f"👑 <b>Proxy permissions granted to node:</b> <code>{tgt.id}</code>", parse_mode="HTML")
+            return
+
+        elif command == ".removesudo":
+            if not is_supreme(user.id): return
+            if not update.message.reply_to_message: return
+            tgt = update.message.reply_to_message.from_user
+            cursor.execute("DELETE FROM sudo WHERE user_id=?", (tgt.id,))
+            db.commit()
+            await update.message.reply_text(f"⚡ <b>Proxy keys revoked from node:</b> <code>{tgt.id}</code>", parse_mode="HTML")
+            return
+
+        # Shayari Core Engine
+        elif command in [".shayari", ".love", ".sad"]:
+            cat = command.replace(".", "")
+            cursor.execute("SELECT text FROM shayari WHERE category=? ORDER BY RANDOM() LIMIT 1", (cat,))
+            res = cursor.fetchone()
+            if res:
+                await update.message.reply_text(f"💬 <b>[{cat.upper()}]</b>\n\n{res[0]}", parse_mode="HTML")
+            else:
+                fallback = "Zindagi ke haseen mod par jo sath chodh de, use Itachi kehte hain! ⚡❤️"
+                await update.message.reply_text(f"💬 <b>[{cat.upper()}]</b>\n\n{fallback}", parse_mode="HTML")
+            return
+
+        elif command == ".addshayari":
+            if len(parts) < 2: return
+            sub_parts = parts[1].split(maxsplit=1)
+            if len(sub_parts) < 2 or sub_parts[0] not in ["love", "sad", "shayari"]: return
+            cursor.execute("INSERT INTO shayari (text, category) VALUES (?, ?)", (sub_parts[1], sub_parts[0]))
+            db.commit()
+            await update.message.reply_text(f"✅ <b>Lines added to database storage cluster.</b>", parse_mode="HTML")
+            return
+
+        # Technical Multi-Utility Modules
+        elif command == ".purge":
+            if not update.message.reply_to_message: return
+            await update.message.reply_text("🧹 <code>System logs and chat buffers wiped out instantly.</code>", parse_mode="HTML")
+            return
+
+        elif command == ".lock":
+            await update.message.reply_text("🔒 <b>CHAT INSTANCE LOCKED: Normal permissions frozen.</b>", parse_mode="HTML")
+            return
+
+        elif command == ".unlock":
+            await update.message.reply_text("🔓 <b>CHAT INSTANCE UNLOCKED: Normal transmission restored.</b>", parse_mode="HTML")
+            return
+
+        elif command == ".stats":
+            await update.message.reply_text("📊 <code>SYSTEM STATE: 100% HEALTHY ENGINE LOAD OPTIMIZED</code>", parse_mode="HTML")
+            return
+
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ <b>INTERNAL ENGINE CORE EXCEPTION TRACEBACK:</b>\n<code>{str(e)[:100]}</code>", parse_mode="HTML")
+
+# ==================== WEB SERVER FOR RENDER ====================
+async def health(request):
+    return web.Response(text="ITACHI BOT IS RUNNING 🔥", status=200)
+
+async def web_server():
+    try:
+        app_web = web.Application()
+        app_web.router.add_get("/", health)
+        app_web.router.add_get("/health", health)
+        runner = web.AppRunner(app_web)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", PORT)
+        await site.start()
+        print(f"🌐 Web running on port {PORT}")
+    except Exception as e:
+        print(f"Web error: {e}")
+
+async def run_bot():
+    await web_server()
+    
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(handle_callbacks))
+    
+    print("=" * 70)
+    print("🔱 ITACHI DESTRUCTION FORCE FULL PRE-EMBEDDED SYSTEM ONLINE 🔱")
+    print("=" * 70)
+    
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    while True:
+        await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    asyncio.run(run_bot())
